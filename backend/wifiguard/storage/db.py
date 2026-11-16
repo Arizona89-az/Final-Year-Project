@@ -11,7 +11,7 @@ from pathlib import Path
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "wifiguard.db"
 
 DEFAULT_SETTINGS = {
-    "scan_interval": "10",
+    "scan_interval": "3",
     "alert_threshold": "50",
     "suspicious_threshold": "20",
 }
