@@ -158,7 +158,7 @@ def monitor_loop() -> None:
         except Exception as e:  # keep the monitor alive across scan errors
             print(f"[monitor_loop] error: {e}")
 
-        interval = max(1, int(get_setting("scan_interval") or 3))
+        interval = int(get_setting("scan_interval") or 10)
         time.sleep(interval)
 
 

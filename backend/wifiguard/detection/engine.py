@@ -51,18 +51,14 @@ _ENCRYPTION_RANK = {
     "open": 0,
     "none": 0,
     "wep": 1,
-    "tkip": 1,
     "wpa": 2,
     "wpa1": 2,
     "wpa2": 3,
     "wpa2-psk": 3,
     "wpa2-personal": 3,
-    "ccmp": 3,
-    "aes": 3,
     "wpa3": 4,
     "wpa3-psk": 4,
     "wpa3-personal": 4,
-    "gcmp": 4,
 }
 
 
@@ -74,9 +70,9 @@ def get_oui(bssid: str) -> str:
 
 def _encryption_rank(label: str) -> int:
     label = (label or "").strip().lower()
-    for key in sorted(_ENCRYPTION_RANK, key=len, reverse=True):
+    for key, rank in _ENCRYPTION_RANK.items():
         if key in label:
-            return _ENCRYPTION_RANK[key]
+            return rank
     return 0 if not label else 2  # unknown non-empty label treated as mid
 
 
@@ -211,17 +207,14 @@ def evaluate_group(
             baseline_encryption = baseline.get("encryption")
             if baseline_encryption is not None:
                 baseline_rank = _encryption_rank(baseline_encryption)
-                entry_rank = max(
-                    _encryption_rank(entry.get("encryption", "")),
-                    _encryption_rank(entry.get("authentication", "")),
-                )
+                entry_rank = _encryption_rank(entry.get("encryption", ""))
                 if entry_rank < baseline_rank:
                     score += w_baseline_enc
                     signals.append({"name": "Baseline encryption drift", "points": w_baseline_enc})
                     reasons.append(
                         f"This BSSID was trusted with '{baseline_encryption}' "
                         f"encryption but is now broadcasting "
-                        f"'{entry.get('authentication', entry.get('encryption'))}' — the same access "
+                        f"'{entry.get('encryption')}' — the same access "
                         f"point identity has weakened its own security, "
                         f"which legitimate APs don't do on their own."
                     )

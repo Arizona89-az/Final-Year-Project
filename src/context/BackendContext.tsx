@@ -144,13 +144,12 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(
     notificationSupport,
   );
-  // bssid -> { status, lastNotifiedAt } — tracks the last status we alerted
-  // on and when. A network that STAYS Rogue/Suspicious re-notifies every
-  // ALERT_REPEAT_MS milliseconds so the user keeps getting reminded.
-  // Entries are removed when the BSSID drops out of the live scan so a
-  // BSSID that disappears and reappears counts as fresh again.
-  const ALERT_REPEAT_MS = 30_000; // re-notify every 30 seconds
-  const lastAlertedStatusRef = useRef<Map<string, { status: NetworkStatus; notifiedAt: number }>>(new Map());
+  // bssid -> last status we already alerted on (or saw), so a network that
+  // STAYS Rogue/Suspicious across many scans only notifies once, on the
+  // transition into that state, not every scan cycle. Entries are removed
+  // once their BSSID drops out of the live scan (see the cleanup below),
+  // so a BSSID that disappears and later reappears counts as fresh again.
+  const lastAlertedStatusRef = useRef<Map<string, NetworkStatus>>(new Map());
   // Separate from the map above (and NOT cleared when it empties out
   // between tests) -- this just answers "has this tab ever processed a
   // scan before", purely to suppress a notification storm from whatever
@@ -194,9 +193,9 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    api.getNetworks().then(applyScan).catch(() => {});
-    api.getTrusted().then(setTrusted).catch(() => {});
-    api.getSettings().then(setSettings).catch(() => {});
+    api.getNetworks().then(applyScan).catch(() => { });
+    api.getTrusted().then(setTrusted).catch(() => { });
+    api.getSettings().then(setSettings).catch(() => { });
 
     const socket = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
     socket.on('connect', () => setConnected(true));
@@ -207,15 +206,6 @@ export function BackendProvider({ children }: { children: ReactNode }) {
     };
   }, [applyScan]);
 
-  // Sync polling directly aligned with scan interval for near real-time updates
-  useEffect(() => {
-    const sec = Math.max(1, parseInt(settings?.scan_interval || '3', 10));
-    const timer = setInterval(() => {
-      api.getNetworks().then(applyScan).catch(() => {});
-    }, sec * 1000);
-    return () => clearInterval(timer);
-  }, [settings?.scan_interval, applyScan]);
-
   const networks = useMemo(() => {
     const now = Date.now();
     return scan.networks.map((raw) =>
@@ -224,19 +214,26 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   }, [scan, trusted]);
 
   // Fire a desktop notification (and optional sound) the moment a network
-  // TRANSITIONS into Suspicious/Rogue, and again every 30 s while it stays
-  // there, so the user keeps getting reminded until the threat is gone.
+  // TRANSITIONS into Suspicious/Rogue — not on every scan while it stays
+  // there, and not for networks that were already Suspicious/Rogue the
+  // very first time this tab observed them without a prior status on
+  // record (first load after a page refresh), to avoid a notification
+  // storm from pre-existing state.
   useEffect(() => {
+    // scan.last_scan_at is null only for the hardcoded placeholder state
+    // this provider starts with, before any real scan (API fetch or
+    // socket "update") has ever arrived — skip entirely rather than
+    // letting that empty placeholder count as "the first scan" and
+    // prematurely flip hasProcessedFirstScanRef, which would disable the
+    // storm-suppression before the real first scan even runs.
     if (scan.last_scan_at === null) return;
 
     const seenBefore = hasProcessedFirstScanRef.current;
-    const now = Date.now();
     for (const network of networks) {
-      const prev = lastAlertedStatusRef.current.get(network.bssid);
+      const prevStatus = lastAlertedStatusRef.current.get(network.bssid);
       const isAlertStatus = network.status === 'rogue' || network.status === 'suspicious';
-      const isNewStatus = isAlertStatus && prev?.status !== network.status && (seenBefore || prev !== undefined);
-      const isRepeat = isAlertStatus && prev?.status === network.status && (now - (prev?.notifiedAt ?? 0)) >= 30_000;
-      if (isNewStatus || isRepeat) {
+      const isNewAlert = isAlertStatus && prevStatus !== network.status && (seenBefore || prevStatus !== undefined);
+      if (isNewAlert) {
         if (desktopNotificationsEnabled && notificationSupport() === 'granted') {
           const title = network.status === 'rogue' ? 'Rogue access point detected' : 'Suspicious access point detected';
           const body = [
@@ -247,21 +244,19 @@ export function BackendProvider({ children }: { children: ReactNode }) {
             .filter(Boolean)
             .join('\n');
           try {
-            new Notification(title, {
-              body,
-              tag: `${network.bssid}:${network.status}`,
-              requireInteraction: true,
-            });
+            // tag: re-notifying the same bssid+status replaces the previous
+            // notification instead of stacking duplicates in the OS tray.
+            // requireInteraction: keeps the toast visible until the user
+            // explicitly dismisses it — no auto-dismiss timeout.
+            new Notification(title, { body, tag: `${network.bssid}:${network.status}`, requireInteraction: true });
           } catch {
-            // Non-fatal; sound alert still fires.
+            // Notification constructor can throw in some contexts (e.g. a
+            // service-worker-only environment); the sound alert still fires.
           }
         }
         if (soundAlertsEnabled) playAlertSound();
-        lastAlertedStatusRef.current.set(network.bssid, { status: network.status, notifiedAt: now });
-      } else if (!prev || prev.status !== network.status) {
-        // Status changed to a non-alert state — track it silently.
-        lastAlertedStatusRef.current.set(network.bssid, { status: network.status, notifiedAt: 0 });
       }
+      lastAlertedStatusRef.current.set(network.bssid, network.status);
     }
 
     // A BSSID that drops out of the scan entirely (Stop Attack / Restore
@@ -280,7 +275,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   }, [networks, scan.last_scan_at, desktopNotificationsEnabled, soundAlertsEnabled]);
 
   const refreshAlerts = useCallback(() => {
-    api.getAlerts().then(setAlerts).catch(() => {});
+    api.getAlerts().then(setAlerts).catch(() => { });
   }, []);
 
   const setDesktopNotificationsEnabled = useCallback(async (enabled: boolean) => {

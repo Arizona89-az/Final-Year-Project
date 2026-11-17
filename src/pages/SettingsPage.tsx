@@ -3,7 +3,7 @@ import { useBackend } from "../context/BackendContext";
 import { api, type Settings } from "../lib/api";
 
 const FALLBACK: Settings = {
-  scan_interval: "3",
+  scan_interval: "10",
   alert_threshold: "50",
   suspicious_threshold: "20",
 };
