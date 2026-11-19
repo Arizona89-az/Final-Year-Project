@@ -193,9 +193,9 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    api.getNetworks().then(applyScan).catch(() => {});
-    api.getTrusted().then(setTrusted).catch(() => {});
-    api.getSettings().then(setSettings).catch(() => {});
+    api.getNetworks().then(applyScan).catch(() => { });
+    api.getTrusted().then(setTrusted).catch(() => { });
+    api.getSettings().then(setSettings).catch(() => { });
 
     const socket = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
     socket.on('connect', () => setConnected(true));
@@ -246,7 +246,9 @@ export function BackendProvider({ children }: { children: ReactNode }) {
           try {
             // tag: re-notifying the same bssid+status replaces the previous
             // notification instead of stacking duplicates in the OS tray.
-            new Notification(title, { body, tag: `${network.bssid}:${network.status}` });
+            // requireInteraction: keeps the toast visible until the user
+            // explicitly dismisses it — no auto-dismiss timeout.
+            new Notification(title, { body, tag: `${network.bssid}:${network.status}`, requireInteraction: true });
           } catch {
             // Notification constructor can throw in some contexts (e.g. a
             // service-worker-only environment); the sound alert still fires.
@@ -273,7 +275,7 @@ export function BackendProvider({ children }: { children: ReactNode }) {
   }, [networks, scan.last_scan_at, desktopNotificationsEnabled, soundAlertsEnabled]);
 
   const refreshAlerts = useCallback(() => {
-    api.getAlerts().then(setAlerts).catch(() => {});
+    api.getAlerts().then(setAlerts).catch(() => { });
   }, []);
 
   const setDesktopNotificationsEnabled = useCallback(async (enabled: boolean) => {
